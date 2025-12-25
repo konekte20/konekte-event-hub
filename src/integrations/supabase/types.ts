@@ -283,6 +283,21 @@ export type Database = {
         Args: { promo_code: string }
         Returns: undefined
       }
+      validate_promo_code: {
+        Args: {
+          promo_code: string
+          base_amount: number
+        }
+        Returns: {
+          valid: boolean
+          code?: string
+          type?: string
+          valeur?: number
+          discount?: number
+          final_amount?: number
+          error?: string
+        }
+      }
     }
     Enums: {
       app_role: "admin"

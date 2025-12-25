@@ -8,11 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from '@/hooks/use-toast';
-import { Search, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Download, ChevronLeft, ChevronRight, MoreVertical, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import Papa from 'papaparse';
+import { showError, logError } from '@/lib/error-handler';
+import type { InscriptionStatus } from '@/lib/types';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -23,36 +26,90 @@ const AdminInscriptions = () => {
   const [levelFilter, setLevelFilter] = useState<string>('all');
   const [page, setPage] = useState(1);
 
-  const { data: inscriptions, isLoading } = useQuery({
-    queryKey: ['inscriptions-admin'],
+  const { data: inscriptionsData, isLoading } = useQuery({
+    queryKey: ['inscriptions-admin', page, statusFilter, levelFilter, search],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('inscriptions')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data;
+        .select('*', { count: 'exact' });
+
+      // Filtres
+      if (statusFilter !== 'all') {
+        query = query.eq('statut', statusFilter);
+      }
+      if (levelFilter !== 'all') {
+        query = query.eq('niveau_experience', levelFilter);
+      }
+      if (search) {
+        query = query.or(`nom_complet.ilike.%${search}%,email.ilike.%${search}%,telephone.ilike.%${search}%`);
+      }
+
+      // Pagination
+      const from = (page - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE - 1;
+      query = query.range(from, to).order('created_at', { ascending: false });
+
+      const { data, error, count } = await query;
+      
+      if (error) {
+        logError(error, 'AdminInscriptions');
+        throw error;
+      }
+      
+      return { data: data || [], count: count || 0 };
     },
   });
 
-  const filteredInscriptions = inscriptions?.filter((i) => {
-    const matchesSearch = search === '' || 
-      i.nom_complet.toLowerCase().includes(search.toLowerCase()) ||
-      i.email.toLowerCase().includes(search.toLowerCase()) ||
-      i.telephone.includes(search);
-    const matchesStatus = statusFilter === 'all' || i.statut === statusFilter;
-    const matchesLevel = levelFilter === 'all' || i.niveau_experience === levelFilter;
-    return matchesSearch && matchesStatus && matchesLevel;
-  }) || [];
+  const inscriptions = inscriptionsData?.data || [];
+  const totalCount = inscriptionsData?.count || 0;
 
-  const totalPages = Math.ceil(filteredInscriptions.length / ITEMS_PER_PAGE);
-  const paginatedInscriptions = filteredInscriptions.slice(
-    (page - 1) * ITEMS_PER_PAGE,
-    page * ITEMS_PER_PAGE
-  );
+  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
 
-  const exportToExcel = () => {
-    const exportData = filteredInscriptions.map((i) => ({
+  // Mutation pour changer le statut
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: InscriptionStatus }) => {
+      const { error } = await supabase
+        .from('inscriptions')
+        .update({ statut: status })
+        .eq('id', id);
+      
+      if (error) {
+        logError(error, 'UpdateInscriptionStatus');
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inscriptions-admin'] });
+      queryClient.invalidateQueries({ queryKey: ['inscription-count'] });
+      toast({ title: 'Statut mis à jour', description: 'Le statut de l\'inscription a été modifié.' });
+    },
+    onError: (error) => {
+      showError(error, 'Erreur lors de la mise à jour');
+    },
+  });
+
+  const exportToExcel = async () => {
+    // Récupérer toutes les inscriptions pour l'export
+    let query = supabase.from('inscriptions').select('*');
+    
+    if (statusFilter !== 'all') {
+      query = query.eq('statut', statusFilter);
+    }
+    if (levelFilter !== 'all') {
+      query = query.eq('niveau_experience', levelFilter);
+    }
+    if (search) {
+      query = query.or(`nom_complet.ilike.%${search}%,email.ilike.%${search}%,telephone.ilike.%${search}%`);
+    }
+    
+    const { data: allInscriptions, error } = await query.order('created_at', { ascending: false });
+    
+    if (error) {
+      showError(error, 'Erreur lors de l\'export');
+      return;
+    }
+
+    const exportData = (allInscriptions || []).map((i) => ({
       'Nom Complet': i.nom_complet,
       'Email': i.email,
       'Téléphone': i.telephone,
@@ -101,7 +158,7 @@ const AdminInscriptions = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Inscriptions</h1>
-          <p className="text-muted-foreground">{filteredInscriptions.length} inscription(s)</p>
+          <p className="text-muted-foreground">{totalCount} inscription(s)</p>
         </div>
         <Button onClick={exportToExcel}>
           <Download className="mr-2 h-4 w-4" />
@@ -119,7 +176,15 @@ const AdminInscriptions = () => {
                 <Input
                   placeholder="Rechercher..."
                   value={search}
-                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                  onChange={(e) => { 
+                    setSearch(e.target.value); 
+                    setPage(1); 
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                    }
+                  }}
                   className="pl-10"
                 />
               </div>
@@ -159,20 +224,62 @@ const AdminInscriptions = () => {
                 <TableHead>Statut</TableHead>
                 <TableHead>Montant</TableHead>
                 <TableHead>Date</TableHead>
+                <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paginatedInscriptions.map((i) => (
-                <TableRow key={i.id}>
-                  <TableCell className="font-medium">{i.nom_complet}</TableCell>
-                  <TableCell>{i.email}</TableCell>
-                  <TableCell>{i.telephone}</TableCell>
-                  <TableCell><Badge variant="outline">{i.niveau_experience}</Badge></TableCell>
-                  <TableCell>{getStatusBadge(i.statut)}</TableCell>
-                  <TableCell>{i.montant_paye} HTG ({i.pourcentage_paye}%)</TableCell>
-                  <TableCell>{format(new Date(i.created_at), 'dd MMM yyyy', { locale: fr })}</TableCell>
+              {inscriptions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    Aucune inscription trouvée
+                  </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                inscriptions.map((i) => (
+                  <TableRow key={i.id}>
+                    <TableCell className="font-medium">{i.nom_complet}</TableCell>
+                    <TableCell>{i.email}</TableCell>
+                    <TableCell>{i.telephone}</TableCell>
+                    <TableCell><Badge variant="outline">{i.niveau_experience}</Badge></TableCell>
+                    <TableCell>{getStatusBadge(i.statut)}</TableCell>
+                    <TableCell>{i.montant_paye} HTG ({i.pourcentage_paye}%)</TableCell>
+                    <TableCell>{format(new Date(i.created_at), 'dd MMM yyyy', { locale: fr })}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => updateStatusMutation.mutate({ id: i.id, status: 'Confirmé' })}
+                            disabled={i.statut === 'Confirmé' || updateStatusMutation.isPending}
+                          >
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            Confirmer
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => updateStatusMutation.mutate({ id: i.id, status: 'En attente' })}
+                            disabled={i.statut === 'En attente' || updateStatusMutation.isPending}
+                          >
+                            <Clock className="mr-2 h-4 w-4" />
+                            Mettre en attente
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => updateStatusMutation.mutate({ id: i.id, status: 'Annulé' })}
+                            disabled={i.statut === 'Annulé' || updateStatusMutation.isPending}
+                            className="text-destructive"
+                          >
+                            <XCircle className="mr-2 h-4 w-4" />
+                            Annuler
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

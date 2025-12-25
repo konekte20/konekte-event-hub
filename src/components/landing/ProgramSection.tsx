@@ -41,12 +41,12 @@ export const ProgramSection = () => {
           </p>
         </div>
 
-        {/* Program Cards */}
+        {/* Program Cards - CORRECTION: Ajout de animate-fade-in */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
           {modules.map((module, index) => (
             <div 
               key={module.id} 
-              className="card-elevated p-6 md:p-8 group hover:scale-[1.02] transition-all duration-300"
+              className="card-elevated p-6 md:p-8 group hover:scale-[1.02] transition-all duration-300 animate-fade-in"
               style={{ animationDelay: `${index * 0.1}s` }}
             >
               {/* Day Badge */}

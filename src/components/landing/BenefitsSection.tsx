@@ -52,14 +52,14 @@ export const BenefitsSection = () => {
           </p>
         </div>
 
-        {/* Benefits Grid */}
+        {/* Benefits Grid - CORRECTION: Ajout de animate-fade-in */}
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {benefits.map((benefit, index) => {
             const IconComponent = iconMap[benefit.icon] || Award;
             return (
               <div 
                 key={benefit.id}
-                className="card-elevated p-6 text-center group hover:bg-gradient-to-br hover:from-card hover:to-primary/5 transition-all duration-300"
+                className="card-elevated p-6 text-center group hover:bg-gradient-to-br hover:from-card hover:to-primary/5 transition-all duration-300 animate-fade-in"
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
                 {/* Icon */}

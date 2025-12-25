@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { SeminarInfo, ProgramModule, Benefit, FooterConfig } from '@/lib/types';
+import { logError } from '@/lib/error-handler';
 
 export const useSeminarInfo = () => {
   return useQuery({
@@ -11,7 +12,10 @@ export const useSeminarInfo = () => {
         .select('*')
         .single();
       
-      if (error) throw error;
+      if (error) {
+        logError(error, 'useSeminarInfo');
+        throw error;
+      }
       return data;
     },
   });
@@ -26,7 +30,10 @@ export const useProgramModules = () => {
         .select('*')
         .order('ordre', { ascending: true });
       
-      if (error) throw error;
+      if (error) {
+        logError(error, 'useProgramModules');
+        throw error;
+      }
       return data || [];
     },
   });
@@ -41,7 +48,10 @@ export const useBenefits = () => {
         .select('*')
         .order('ordre', { ascending: true });
       
-      if (error) throw error;
+      if (error) {
+        logError(error, 'useBenefits');
+        throw error;
+      }
       return data || [];
     },
   });
@@ -56,7 +66,10 @@ export const useFooterConfig = () => {
         .select('*')
         .single();
       
-      if (error) throw error;
+      if (error) {
+        logError(error, 'useFooterConfig');
+        throw error;
+      }
       return data;
     },
   });
@@ -71,7 +84,10 @@ export const useInscriptionCount = () => {
         .select('*', { count: 'exact', head: true })
         .neq('statut', 'Annulé');
       
-      if (error) throw error;
+      if (error) {
+        logError(error, 'useInscriptionCount');
+        throw error;
+      }
       return count || 0;
     },
   });

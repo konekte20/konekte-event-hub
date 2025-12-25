@@ -49,9 +49,9 @@ export const HeroSection = ({ onOpenModal }: HeroSectionProps) => {
             Séminaire Intensif 3 Jours
           </div>
 
-          {/* Main Title */}
+          {/* Main Title - CORRECTION DU DOUBLON */}
           <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold leading-tight mb-6 animate-fade-in" style={{ animationDelay: '0.1s' }}>
-            {seminarInfo?.titre || 'Maîtriser l\'IA pour le'}
+            Maîtriser l'IA pour le
             <span className="block text-gradient">Développement Web</span>
           </h1>
 
@@ -71,7 +71,7 @@ export const HeroSection = ({ onOpenModal }: HeroSectionProps) => {
               <span>
                 {seminarInfo?.date_debut && seminarInfo?.date_fin 
                   ? `${formatDate(seminarInfo.date_debut)} - ${formatDate(seminarInfo.date_fin)}`
-                  : '15 - 17 Mars 2025'
+                  : '14 - 16 Mars 2025'
                 }
               </span>
             </div>

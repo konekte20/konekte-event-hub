@@ -4,6 +4,8 @@ import { useSeminarInfo } from '@/hooks/useSeminarData';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { showError, logError } from '@/lib/error-handler';
+import { createBazikPayment } from '@/lib/bazik-utils';
 
 interface InscriptionModalProps {
   isOpen: boolean;
@@ -39,53 +41,101 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
     return baseAmount;
   };
 
+  // CORRECTION: Meilleure gestion des erreurs et validation
   const validatePromo = async () => {
-    if (!formData.codePromo.trim()) return;
+    if (!formData.codePromo.trim()) {
+      toast({ 
+        title: 'Code vide', 
+        description: 'Veuillez entrer un code promo.', 
+        variant: 'destructive' 
+      });
+      return;
+    }
+    
     setIsValidatingPromo(true);
 
     try {
-      const { data: promo, error } = await supabase
-        .from('promo_codes')
-        .select('*')
-        .eq('code', formData.codePromo.toUpperCase())
-        .eq('actif', true)
-        .single();
-
-      if (error || !promo) {
-        toast({ title: 'Code invalide', description: 'Ce code promo n\'existe pas.', variant: 'destructive' });
-        return;
-      }
-
-      if (promo.date_expiration && new Date(promo.date_expiration) < new Date()) {
-        toast({ title: 'Code expiré', description: 'Ce code promo a expiré.', variant: 'destructive' });
-        return;
-      }
-
-      if (promo.utilisations_max > 0 && promo.utilisations_actuelles >= promo.utilisations_max) {
-        toast({ title: 'Code épuisé', description: 'Ce code promo a atteint sa limite d\'utilisation.', variant: 'destructive' });
-        return;
-      }
-
       const baseAmount = prixBase * (parseInt(formData.pourcentagePaye) / 100);
-      const discount = promo.type === 'percentage' 
-        ? (baseAmount * promo.valeur) / 100 
-        : promo.valeur;
+      
+      const { data: validationResult, error } = await supabase.rpc('validate_promo_code', {
+        promo_code: formData.codePromo.toUpperCase(),
+        base_amount: Math.round(baseAmount),
+      });
 
-      setPromoApplied({ code: promo.code, discount });
-      toast({ title: 'Code appliqué!', description: `Réduction de ${promo.valeur}${promo.type === 'percentage' ? '%' : ' HTG'} appliquée.` });
+      if (error) {
+        logError(error, 'ValidatePromo');
+        toast({ title: 'Erreur', description: 'Impossible de valider le code promo.', variant: 'destructive' });
+        setPromoApplied(null);
+        return;
+      }
+
+      // CORRECTION: Vérification que validationResult n'est pas null
+      if (!validationResult) {
+        toast({ 
+          title: 'Erreur', 
+          description: 'Aucune réponse du serveur.', 
+          variant: 'destructive' 
+        });
+        setPromoApplied(null);
+        return;
+      }
+
+      if (!validationResult.valid) {
+        toast({ 
+          title: 'Code invalide', 
+          description: validationResult.error || 'Ce code promo n\'est pas valide.', 
+          variant: 'destructive' 
+        });
+        setPromoApplied(null);
+        return;
+      }
+
+      setPromoApplied({ 
+        code: validationResult.code, 
+        discount: validationResult.discount 
+      });
+      
+      const discountText = validationResult.type === 'percentage' 
+        ? `${validationResult.valeur}%`
+        : `${validationResult.valeur} HTG`;
+      
+      toast({ 
+        title: 'Code appliqué!', 
+        description: `Réduction de ${discountText} appliquée. Montant final: ${validationResult.final_amount} HTG` 
+      });
     } catch (err) {
-      toast({ title: 'Erreur', description: 'Impossible de valider le code.', variant: 'destructive' });
+      logError(err, 'ValidatePromo');
+      showError(err, 'Erreur de validation');
+      setPromoApplied(null);
     } finally {
       setIsValidatingPromo(false);
     }
   };
 
+  // CORRECTION: Meilleure validation du téléphone haïtien
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
-    if (!formData.nomComplet || formData.nomComplet.trim().length < 3) newErrors.nomComplet = 'Nom requis (min 3 caractères)';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Email invalide';
-    if (!/^(\+?509)?[ -]?[234][0-9]{3}[ -]?[0-9]{4}$/.test(formData.telephone.replace(/\s/g, ''))) newErrors.telephone = 'Numéro haïtien invalide';
-    if (!formData.niveauExperience) newErrors.niveauExperience = 'Sélectionnez votre niveau';
+    
+    if (!formData.nomComplet || formData.nomComplet.trim().length < 3) {
+      newErrors.nomComplet = 'Nom requis (min 3 caractères)';
+    }
+    
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      newErrors.email = 'Email invalide';
+    }
+    
+    // CORRECTION: Validation améliorée du téléphone
+    const cleanedPhone = formData.telephone.replace(/[\s\-\(\)]/g, '');
+    const isValidHaitianPhone = /^(\+?509)?[234]\d{7}$/.test(cleanedPhone);
+    
+    if (!isValidHaitianPhone) {
+      newErrors.telephone = 'Numéro haïtien invalide (ex: 3712-3456 ou +509 3712-3456)';
+    }
+    
+    if (!formData.niveauExperience) {
+      newErrors.niveauExperience = 'Sélectionnez votre niveau';
+    }
+    
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -97,33 +147,72 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
 
     try {
       const transactionId = `KONEKTE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const amount = calculatePrice();
       
-      const { error } = await supabase.from('inscriptions').insert({
+      // Étape 1: Enregistrer l'inscription en "En attente"
+      const { error: insertError } = await supabase.from('inscriptions').insert({
         nom_complet: formData.nomComplet,
         email: formData.email,
         telephone: formData.telephone,
         niveau_experience: formData.niveauExperience as 'Débutant' | 'Intermédiaire' | 'Avancé',
         motivation: formData.motivation || null,
-        montant_paye: calculatePrice(),
+        montant_paye: amount,
         pourcentage_paye: formData.pourcentagePaye as '25' | '50' | '100',
         code_promo: promoApplied?.code || null,
-        statut: 'Confirmé' as const,
+        statut: 'En attente' as const,
         transaction_id: transactionId,
       });
 
-      if (error) throw error;
-
-      if (promoApplied) {
-        await supabase.rpc('increment_promo_usage', { promo_code: promoApplied.code });
+      if (insertError) {
+        logError(insertError, 'SubmitInscription');
+        throw insertError;
       }
 
-      queryClient.invalidateQueries({ queryKey: ['inscription-count'] });
-      toast({ title: '🎉 Inscription réussie!', description: `Votre place est réservée. Transaction: ${transactionId}` });
-      onClose();
-      setFormData({ nomComplet: '', email: '', telephone: '', niveauExperience: '', motivation: '', pourcentagePaye: '50', codePromo: '' });
-      setPromoApplied(null);
+      // Étape 2: Créer la transaction Bazik.io et obtenir l'URL de paiement
+      const [firstName, ...lastNameParts] = formData.nomComplet.split(' ');
+      const lastName = lastNameParts.join(' ') || firstName;
+      
+      const paymentResult = await createBazikPayment({
+        amount,
+        transactionId,
+        email: formData.email,
+        phoneNumber: formData.telephone,
+        description: `Inscription séminaire - ${formData.nomComplet}`,
+        firstName: firstName,
+        lastName: lastName,
+      });
+
+      if (!paymentResult.success || !paymentResult.paymentUrl) {
+        toast({ 
+          title: 'Erreur de paiement', 
+          description: paymentResult.message || 'Impossible de créer le paiement. Votre inscription est en attente.',
+          variant: 'destructive'
+        });
+        queryClient.invalidateQueries({ queryKey: ['inscription-count'] });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Étape 3: Incrémenter l'utilisation du code promo (avant redirection)
+      if (promoApplied) {
+        const { error: promoError } = await supabase.rpc('increment_promo_usage', { promo_code: promoApplied.code });
+        if (promoError) {
+          logError(promoError, 'IncrementPromoUsage');
+          // Ne pas bloquer la redirection si l'incrémentation échoue
+        }
+      }
+
+      // Étape 4: Sauvegarder le transactionId pour le callback
+      sessionStorage.setItem('pending_transaction', transactionId);
+      
+      // Étape 5: Rediriger vers l'interface Bazik.io
+      window.location.href = paymentResult.paymentUrl;
+      
+      // Note: Le code suivant ne s'exécutera pas car on redirige
+      // Le callback Bazik.io gérera la mise à jour du statut
     } catch (err) {
-      toast({ title: 'Erreur', description: 'Impossible de finaliser l\'inscription.', variant: 'destructive' });
+      logError(err, 'SubmitInscription');
+      showError(err, 'Erreur d\'inscription');
     } finally {
       setIsSubmitting(false);
     }
@@ -136,7 +225,7 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
       <div className="bg-card rounded-3xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl animate-scale-in">
         <div className="sticky top-0 bg-card border-b border-border p-6 flex items-center justify-between rounded-t-3xl">
           <h2 className="text-2xl font-bold">Réserver ma place</h2>
-          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl transition-colors">
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl transition-colors" aria-label="Fermer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -144,25 +233,47 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           <div>
             <label className="block text-sm font-medium mb-2">Nom complet *</label>
-            <input type="text" className={`input-styled ${errors.nomComplet ? 'border-destructive' : ''}`} placeholder="Ex: Jean Baptiste" value={formData.nomComplet} onChange={(e) => setFormData({ ...formData, nomComplet: e.target.value })} />
+            <input 
+              type="text" 
+              className={`input-styled ${errors.nomComplet ? 'border-destructive' : ''}`} 
+              placeholder="Ex: Jean Baptiste" 
+              value={formData.nomComplet} 
+              onChange={(e) => setFormData({ ...formData, nomComplet: e.target.value })} 
+            />
             {errors.nomComplet && <p className="text-destructive text-sm mt-1">{errors.nomComplet}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-2">Email *</label>
-            <input type="email" className={`input-styled ${errors.email ? 'border-destructive' : ''}`} placeholder="votreemail@exemple.com" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+            <input 
+              type="email" 
+              className={`input-styled ${errors.email ? 'border-destructive' : ''}`} 
+              placeholder="votreemail@exemple.com" 
+              value={formData.email} 
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })} 
+            />
             {errors.email && <p className="text-destructive text-sm mt-1">{errors.email}</p>}
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">Téléphone (MonCash) *</label>
-            <input type="tel" className={`input-styled ${errors.telephone ? 'border-destructive' : ''}`} placeholder="+509 3712 3456" value={formData.telephone} onChange={(e) => setFormData({ ...formData, telephone: e.target.value })} />
+            <label className="block text-sm font-medium mb-2">Téléphone *</label>
+            <input 
+              type="tel" 
+              className={`input-styled ${errors.telephone ? 'border-destructive' : ''}`} 
+              placeholder="+509 3712 3456" 
+              value={formData.telephone} 
+              onChange={(e) => setFormData({ ...formData, telephone: e.target.value })} 
+            />
             {errors.telephone && <p className="text-destructive text-sm mt-1">{errors.telephone}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-2">Niveau d'expérience *</label>
-            <select className={`input-styled ${errors.niveauExperience ? 'border-destructive' : ''}`} value={formData.niveauExperience} onChange={(e) => setFormData({ ...formData, niveauExperience: e.target.value as any })}>
+            <select 
+              className={`input-styled ${errors.niveauExperience ? 'border-destructive' : ''}`} 
+              value={formData.niveauExperience} 
+              onChange={(e) => setFormData({ ...formData, niveauExperience: e.target.value as any })}
+            >
               <option value="">Sélectionnez...</option>
               <option value="Débutant">Débutant (aucune expérience)</option>
               <option value="Intermédiaire">Intermédiaire (quelques notions)</option>
@@ -173,15 +284,30 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
 
           <div>
             <label className="block text-sm font-medium mb-2">Motivation (optionnel)</label>
-            <textarea className="input-styled" rows={3} placeholder="Parlez-nous de vos objectifs..." value={formData.motivation} onChange={(e) => setFormData({ ...formData, motivation: e.target.value })} maxLength={500} />
+            <textarea 
+              className="input-styled" 
+              rows={3} 
+              placeholder="Parlez-nous de vos objectifs..." 
+              value={formData.motivation} 
+              onChange={(e) => setFormData({ ...formData, motivation: e.target.value })} 
+              maxLength={500} 
+            />
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-2">Option de paiement *</label>
             <div className="grid grid-cols-3 gap-3">
               {(['25', '50', '100'] as const).map((pct) => (
-                <button type="button" key={pct} onClick={() => { setFormData({ ...formData, pourcentagePaye: pct }); setPromoApplied(null); }}
-                  className={`p-4 rounded-xl border-2 transition-all ${formData.pourcentagePaye === pct ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}`}>
+                <button 
+                  type="button" 
+                  key={pct} 
+                  onClick={() => { 
+                    // CORRECTION: Reset aussi le codePromo quand on change le pourcentage
+                    setFormData({ ...formData, pourcentagePaye: pct, codePromo: '' }); 
+                    setPromoApplied(null); 
+                  }}
+                  className={`p-4 rounded-xl border-2 transition-all ${formData.pourcentagePaye === pct ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}`}
+                >
                   <div className="text-lg font-bold">{pct}%</div>
                   <div className="text-xs text-muted-foreground">{new Intl.NumberFormat('fr-HT').format(prixBase * parseInt(pct) / 100)} HTG</div>
                 </button>
@@ -192,12 +318,27 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
           <div>
             <label className="block text-sm font-medium mb-2">Code promo</label>
             <div className="flex gap-2">
-              <input type="text" className="input-styled flex-1" placeholder="KONEKTE25" value={formData.codePromo} onChange={(e) => setFormData({ ...formData, codePromo: e.target.value.toUpperCase() })} />
-              <button type="button" onClick={validatePromo} disabled={isValidatingPromo || !formData.codePromo} className="btn-secondary px-4">
+              <input 
+                type="text" 
+                className="input-styled flex-1" 
+                placeholder="KONEKTE25" 
+                value={formData.codePromo} 
+                onChange={(e) => setFormData({ ...formData, codePromo: e.target.value.toUpperCase() })} 
+              />
+              <button 
+                type="button" 
+                onClick={validatePromo} 
+                disabled={isValidatingPromo || !formData.codePromo} 
+                className="btn-secondary px-4"
+              >
                 {isValidatingPromo ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Appliquer'}
               </button>
             </div>
-            {promoApplied && <p className="text-success text-sm mt-2 flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Code {promoApplied.code} appliqué!</p>}
+            {promoApplied && (
+              <p className="text-success text-sm mt-2 flex items-center gap-1">
+                <CheckCircle className="w-4 h-4" /> Code {promoApplied.code} appliqué!
+              </p>
+            )}
           </div>
 
           <div className="bg-muted/50 rounded-2xl p-4">
@@ -218,7 +359,13 @@ export const InscriptionModal = ({ isOpen, onClose }: InscriptionModalProps) => 
           </div>
 
           <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-            {isSubmitting ? <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Traitement...</> : 'Procéder au paiement MonCash'}
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin mr-2" /> Traitement...
+              </>
+            ) : (
+              'Procéder au paiement'
+            )}
           </button>
         </form>
       </div>

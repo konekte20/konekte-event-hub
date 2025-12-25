@@ -20,34 +20,37 @@ export const Footer = () => {
               Nous formons la prochaine génération de développeurs haïtiens aux technologies de pointe.
             </p>
             
-            {/* Social Links */}
+            {/* Social Links - CORRECTION: Vérification que les URLs ne sont pas vides */}
             <div className="flex items-center gap-4">
-              {footerConfig?.facebook && (
+              {footerConfig?.facebook && footerConfig.facebook.trim() && (
                 <a 
                   href={footerConfig.facebook} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="w-10 h-10 bg-background/10 rounded-xl flex items-center justify-center hover:bg-primary hover:text-primary-foreground transition-colors"
+                  aria-label="Facebook"
                 >
                   <Facebook className="w-5 h-5" />
                 </a>
               )}
-              {footerConfig?.instagram && (
+              {footerConfig?.instagram && footerConfig.instagram.trim() && (
                 <a 
                   href={footerConfig.instagram} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="w-10 h-10 bg-background/10 rounded-xl flex items-center justify-center hover:bg-primary hover:text-primary-foreground transition-colors"
+                  aria-label="Instagram"
                 >
                   <Instagram className="w-5 h-5" />
                 </a>
               )}
-              {footerConfig?.linkedin && (
+              {footerConfig?.linkedin && footerConfig.linkedin.trim() && (
                 <a 
                   href={footerConfig.linkedin} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="w-10 h-10 bg-background/10 rounded-xl flex items-center justify-center hover:bg-primary hover:text-primary-foreground transition-colors"
+                  aria-label="LinkedIn"
                 >
                   <Linkedin className="w-5 h-5" />
                 </a>
@@ -75,7 +78,7 @@ export const Footer = () => {
           <div>
             <h4 className="font-bold mb-4">Contact</h4>
             <div className="space-y-3">
-              {footerConfig?.email && (
+              {footerConfig?.email && footerConfig.email.trim() && (
                 <a 
                   href={`mailto:${footerConfig.email}`} 
                   className="flex items-center gap-3 text-background/70 hover:text-background transition-colors"
@@ -84,7 +87,7 @@ export const Footer = () => {
                   <span>{footerConfig.email}</span>
                 </a>
               )}
-              {footerConfig?.telephone && (
+              {footerConfig?.telephone && footerConfig.telephone.trim() && (
                 <a 
                   href={`tel:${footerConfig.telephone}`} 
                   className="flex items-center gap-3 text-background/70 hover:text-background transition-colors"
@@ -93,7 +96,7 @@ export const Footer = () => {
                   <span>{footerConfig.telephone}</span>
                 </a>
               )}
-              {footerConfig?.adresse && (
+              {footerConfig?.adresse && footerConfig.adresse.trim() && (
                 <div className="flex items-center gap-3 text-background/70">
                   <MapPin className="w-5 h-5 text-primary" />
                   <span>{footerConfig.adresse}</span>
